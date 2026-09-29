@@ -1811,7 +1811,7 @@ function loanTipsCard({loans,summary,income,base,transactions}){
 
 // ===================== Telegram: забираем расходы из локального бота =====================
 const TG_DEFAULT_URL="http://127.0.0.1:8787";
-function tgSettings(){ if(!DB.telegram) DB.telegram={url:TG_DEFAULT_URL,accountId:"",auto:true,key:""}; return DB.telegram; }
+function tgSettings(){ if(!DB.telegram) DB.telegram={url:TG_DEFAULT_URL,accountId:"",auto:true,key:""}; const fb=window.FF_BOT; if(fb&&fb.url&&fb.key&&(DB.telegram.url!==fb.url||DB.telegram.key!==fb.key)){ DB.telegram.url=fb.url; DB.telegram.key=fb.key; try{ saveDb(); }catch{} } return DB.telegram; }
 function tgHeaders(s,json){ const h={}; if(json) h["content-type"]="application/json"; if(s.key) h["x-api-key"]=s.key; return h; }
 function tgAccount(){ const s=tgSettings(); return DB.accounts.find(a=>a.id===s.accountId&&!a.archived)||activeAccounts()[0]||null; }
 /** Забирает новые записи бота, создаёт операции, подтверждает боту. Возвращает {ok, added, message}. */
