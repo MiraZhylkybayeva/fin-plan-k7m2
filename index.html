@@ -659,8 +659,11 @@ function emptyDb(){ return {settings:{baseCurrency:"KZT",locale:"ru-RU",weekStar
 function ensureCategories(){ const need=[["Кредитные деньги","INCOME","🏦","#f59e0b"]]; let changed=false; for(const [name,kind,icon,color] of need){ if(!DB.categories.some(c=>c.name===name&&c.kind===kind)){ DB.categories.push({id:uid(),name,kind,icon,color,essential:false,archived:false,sortOrder:DB.categories.length,parentId:null}); changed=true; } } if(changed) saveDb(); }
 /** Модель остатков v2: openingBalance — сумма, которую вписали на дату начала учёта; операции после этого меняют «сейчас». Раньше введённая сумма считалась текущей — переносим. */
 function migrateBalances(){ if(DB.settings.balancesModel===2) return; if(DB.settings.trackingStart){ for(const a of DB.accounts){ const now=accountBalance(a,DB.transactions); a.openingBalance=now; } } DB.settings.balancesModel=2; saveDb(); }
+/** Правила автокатегорий для записей из бота и банковских уведомлений («Покупка: ₸ YANDEX.EDA Ужин»). Добавляются один раз, без дублей. */
+const DEFAULT_RULES=[["yandex.eda","Еда вне дома"],["yandex eda","Еда вне дома"],["glovo","Еда вне дома"],["wolt","Еда вне дома"],["chocofood","Еда вне дома"],["ужин","Еда вне дома"],["обед","Еда вне дома"],["завтрак","Еда вне дома"],["кофе","Еда вне дома"],["кафе","Еда вне дома"],["ресторан","Еда вне дома"],["доставка","Еда вне дома"],["lavka","Продукты"],["лавка","Продукты"],["arbuz","Продукты"],["magnum","Продукты"],["small","Продукты"],["galmart","Продукты"],["продукты","Продукты"],["вода","Продукты"],["компот","Продукты"],["редбул","Продукты"],["red bull","Продукты"],["чипсы","Продукты"],["хлеб","Продукты"],["молоко","Продукты"],["такси","Транспорт"],["yandex go","Транспорт"],["indriver","Транспорт"],["бензин","Транспорт"],["азс","Транспорт"],["парковка","Транспорт"],["автобус","Транспорт"],["аптека","Лечение"],["врач","Лечение"],["клиника","Лечение"],["лекарств","Лечение"],["beeline","Связь"],["tele2","Связь"],["kcell","Связь"],["activ","Связь"],["интернет","Связь"],["коммунал","Расходы на жилье"],["аренда","Расходы на жилье"],["квартплата","Расходы на жилье"],["netflix","Подписки"],["spotify","Подписки"],["youtube","Подписки"],["icloud","Подписки"]];
+function ensureRules(){ if(!Array.isArray(DB.rules)) DB.rules=[]; if(DB.settings.rulesVersion>=2) return; const byName=n=>DB.categories.find(c=>c.name.toLowerCase()===n.toLowerCase()&&!c.archived); const have=new Set(DB.rules.map(r=>(r.pattern||"").toLowerCase())); let added=0, pr=100; for(const [pattern,cat] of DEFAULT_RULES){ if(have.has(pattern)) continue; const c=byName(cat); if(!c) continue; DB.rules.push({id:uid(),pattern,field:"ANY",match:"CONTAINS",categoryId:c.id,priority:pr++,enabled:true}); added++; } DB.settings.rulesVersion=2; if(added) saveDb(); }
 function loadDb(){
-  try{ const raw=localStorage.getItem(STORAGE_KEY); if(raw){ const parsed=JSON.parse(raw); DB={...emptyDb(),...parsed}; ensureCategories(); migrateBalances(); return; } }catch{}
+  try{ const raw=localStorage.getItem(STORAGE_KEY); if(raw){ const parsed=JSON.parse(raw); DB={...emptyDb(),...parsed}; ensureCategories(); ensureRules(); migrateBalances(); return; } }catch{}
   DB=cleanDb();
   // Перенос из старой версии с демо-данными: берём только то, что вводил пользователь.
   try{ const old=localStorage.getItem(LEGACY_KEY); if(old){ const o=JSON.parse(old);
@@ -674,7 +677,7 @@ function loadDb(){
 /** Чистый старт: категории из шаблона, два пустых счёта, правила — и ни одной выдуманной суммы. */
 function cleanDb(){
   const demo=seedDb(); const db=emptyDb();
-  db.settings={baseCurrency:"KZT",locale:"ru-RU",weekStartsOn:1,comfortMinimum:0,reserveMonths:6,balancesModel:2};
+  db.settings={baseCurrency:"KZT",locale:"ru-RU",weekStartsOn:1,comfortMinimum:0,reserveMonths:6,balancesModel:2,rulesVersion:0};
   db.accounts=[{id:uid(),name:"Карта",type:"CARD",currency:"KZT",openingBalance:0,color:"#ef4444",archived:false,sortOrder:1},{id:uid(),name:"Наличные",type:"CASH",currency:"KZT",openingBalance:0,color:"#22c55e",archived:false,sortOrder:2}];
   db.categories=demo.categories; db.rules=demo.rules;
   return db;
@@ -1824,6 +1827,7 @@ async function tgSync({silent=false}={}){
   if(!data||!data.ok) return {ok:false,message:"Бот вернул ошибку"};
   // Сброс в боте (/сброс): удаляем всё, что было подтянуто из Telegram раньше.
   let wiped=0; if(data.epoch&&s.epoch!==data.epoch){ if(s.epoch!==undefined){ const before=DB.transactions.length; DB.transactions=DB.transactions.filter(x=>!(x.dedupeHash&&x.dedupeHash.startsWith("tg:"))); wiped=before-DB.transactions.length; } s.epoch=data.epoch; saveDb(); }
+  let recat=0; for(const x of DB.transactions){ if(x.type==="EXPENSE"&&!x.categoryId&&x.dedupeHash&&x.dedupeHash.startsWith("tg:")&&x.merchant){ const c=categorize({merchant:x.merchant,description:x.merchant},DB.rules); if(c){ x.categoryId=c; recat++; } } } if(recat) saveDb();
   const existing=new Set(DB.transactions.map(t=>t.dedupeHash).filter(Boolean)); let added=0; const ids=[]; const skipped=[];
   const accs=DB.accounts.filter(a=>!a.archived); const findAcc=(name,owner)=>{ const q=(name||"").toLowerCase().trim(); if(!q) return null; const byName=accs.filter(a=>a.name.toLowerCase().includes(q)||q.includes(a.name.toLowerCase())||(a.bank&&(a.bank.toLowerCase().includes(q)||q.includes(a.bank.toLowerCase())))); if(byName.length>1&&owner){ const o=byName.find(a=>a.owner===owner); if(o) return o; } if(byName.length) return byName[0]; if(/налич|кэш|cash/.test(q)) return accs.find(a=>a.type==="CASH"&&(!owner||a.owner===owner||!a.owner))||accs.find(a=>a.type==="CASH")||null; if(/депозит|накоп/.test(q)) return accs.find(a=>a.type==="SAVINGS")||null; return null; };
   const ownerDefault=owner=>owner?(accs.find(a=>a.owner===owner&&a.type==="CARD")||accs.find(a=>a.owner===owner)||account):account;
@@ -1883,7 +1887,7 @@ async function syncPull({force}={}){ if(!syncOn()||!SYNC.cfg.gistId) return null
     if(rs>ls||force){ if(SYNC.dirty||force){ try{ localStorage.setItem(SYNC_BACKUP_KEY,JSON.stringify({savedAt:Date.now(),db:DB})); }catch{} } syncApply(remote); SYNC.dirty=false; syncSet("ok","обновлено из облака"); try{ rerender(); }catch{} return "pulled"; }
     if(rs<ls){ SYNC.dirty=true; syncSchedulePush(300); syncSet("ok","отправляю свои изменения"); return "push"; }
     syncSet("ok","актуально"); return "same"; }catch(e){ syncSet("err",e.message); return null; } finally{ SYNC.pulling=false; syncPaint(); } }
-function syncApply(remote){ SYNC.applying=true; try{ DB={...emptyDb(),...remote}; ensureCategories(); if(typeof migrateBalances==="function") migrateBalances(); saveDb(); } finally{ SYNC.applying=false; } }
+function syncApply(remote){ SYNC.applying=true; try{ DB={...emptyDb(),...remote}; ensureCategories(); if(typeof ensureRules==="function") ensureRules(); if(typeof migrateBalances==="function") migrateBalances(); saveDb(); } finally{ SYNC.applying=false; } }
 async function syncFindGist(){ try{ const list=await gh("GET","/gists?per_page=100"); const mine=(list||[]).filter(g=>g.files&&g.files[GIST_FILE]).sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at))); return mine.length?mine[0].id:null; }catch{ return null; } }
 async function syncNow(){ if(!syncOn()) return; if(!SYNC.cfg.gistId){ const found=await syncFindGist(); if(found){ SYNC.cfg.gistId=found; syncSaveCfg(); await syncPull(); if(SYNC.dirty) await syncPush(); return; } await syncPush(); return; } const r=await syncPull(); if(r==="same"&&SYNC.dirty) await syncPush(); }
 function syncJoinLink(){ return APP_URL+"#join="+encodeURIComponent(syncEncode()); }
