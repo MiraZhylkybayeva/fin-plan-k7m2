@@ -1811,14 +1811,15 @@ function loanTipsCard({loans,summary,income,base,transactions}){
 
 // ===================== Telegram: забираем расходы из локального бота =====================
 const TG_DEFAULT_URL="http://127.0.0.1:8787";
-function tgSettings(){ if(!DB.telegram) DB.telegram={url:TG_DEFAULT_URL,accountId:"",auto:true}; return DB.telegram; }
+function tgSettings(){ if(!DB.telegram) DB.telegram={url:TG_DEFAULT_URL,accountId:"",auto:true,key:""}; return DB.telegram; }
+function tgHeaders(s,json){ const h={}; if(json) h["content-type"]="application/json"; if(s.key) h["x-api-key"]=s.key; return h; }
 function tgAccount(){ const s=tgSettings(); return DB.accounts.find(a=>a.id===s.accountId&&!a.archived)||activeAccounts()[0]||null; }
 /** Забирает новые записи бота, создаёт операции, подтверждает боту. Возвращает {ok, added, message}. */
 async function tgSync({silent=false}={}){
   const s=tgSettings(); const account=tgAccount();
   if(!account) return {ok:false,message:"Сначала создайте счёт в настройках"};
   let data;
-  try{ const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(),4000); const res=await fetch(s.url.replace(/\/$/,"")+"/entries",{signal:ctrl.signal}); clearTimeout(t); data=await res.json(); }
+  try{ const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(),4000); const res=await fetch(s.url.replace(/\/$/,"")+"/entries",{signal:ctrl.signal,headers:tgHeaders(s,false)}); clearTimeout(t); data=await res.json(); }
   catch{ return {ok:false,message:silent?"":"Бот не отвечает. Запустите start-bot.cmd в папке FinFlowBot и повторите."}; }
   if(!data||!data.ok) return {ok:false,message:"Бот вернул ошибку"};
   // Сброс в боте (/сброс): удаляем всё, что было подтянуто из Telegram раньше.
@@ -1831,7 +1832,7 @@ async function tgSync({silent=false}={}){
       DB.transactions.push({id:uid(),type:"TRANSFER",date:e.date,amount:Number(e.amount)||0,currency:fromA.currency,accountId:fromA.id,toAccountId:toA.id,toAmount:fromA.currency===toA.currency?null:Number(e.amount)||0,categoryId:null,merchant:null,note:`Telegram · ${e.user||""}`.trim(),owner,dedupeHash:hash,importBatchId:null,createdAt:Date.now()}); ids.push(e.id); added++; continue; }
     const acc=findAcc(e.account,owner)||ownerDefault(owner); const categoryId=e.type==="EXPENSE"?categorize({merchant:e.note,description:e.note},DB.rules):(DB.categories.find(c=>c.kind==="INCOME"&&/зарплат/i.test(e.note||"")&&/зарплат/i.test(c.name))||{}).id||null;
     DB.transactions.push({id:uid(),type:e.type==="INCOME"?"INCOME":"EXPENSE",date:e.date,amount:Number(e.amount)||0,currency:acc.currency,accountId:acc.id,toAccountId:null,toAmount:null,categoryId,merchant:e.note||null,note:e.user?`Telegram · ${e.user}`:"Telegram",owner,dedupeHash:hash,importBatchId:null,createdAt:Date.now()}); ids.push(e.id); added++; }
-  if(ids.length){ try{ await fetch(s.url.replace(/\/$/,"")+"/ack",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids})}); }catch{} }
+  if(ids.length){ try{ await fetch(s.url.replace(/\/$/,"")+"/ack",{method:"POST",headers:tgHeaders(s,true),body:JSON.stringify({ids})}); }catch{} }
   if(added) saveDb();
   const skipMsg=skipped.length?` Не определён счёт для: ${skipped.join("; ")} — назовите счета в Telegram так же, как в «Капитал → Остатки» (или уточните «с каспи на наличные»).`:"";
   tgPushBudget(s).catch(()=>{});
@@ -1839,15 +1840,15 @@ async function tgSync({silent=false}={}){
 }
 function tgSettingsCard(){
   const s=tgSettings(); const accounts=activeAccounts(); const st=UI.tg_state||{};
-  return card({title:"Telegram-бот",subtitle:"Пишете боту «5000 кофе» — запись появляется здесь как операция. Бот работает на этом компьютере (папка FinFlowBot, файл start-bot.cmd).",body:`<form data-form="tgSave" class="form"><div class="form-grid c3">${field({label:"Адрес бота",id:"tg-url",hint:"менять не нужно, если бот запущен на этом же компьютере"},`<input id="tg-url" name="url" value="${esc(s.url)}" class="input">`)}${field({label:"Счёт для записей",id:"tg-acc"},`<select id="tg-acc" name="accountId" class="select">${options(accounts.map(a=>({value:a.id,label:`${a.name} (${a.currency})`})),tgAccount()?.id||"")}</select>`)}<div class="field"><label>Автоматически</label><label class="row xs" style="gap:8px;height:40px"><input type="checkbox" name="auto" ${s.auto?"checked":""}>забирать при открытии приложения</label></div></div>${msg(st.ok,st.message)}<div class="actions"><button type="button" class="btn secondary" data-act="tgSync">Забрать из Telegram сейчас</button><button type="submit" class="btn primary">Сохранить</button></div></form>
+  return card({title:"Telegram-бот",subtitle:"Пишете боту «5000 кофе» — запись появляется здесь как операция. Облачный бот работает круглосуточно; адрес и ключ общие для М и Л (хранятся в общей базе).",body:`<form data-form="tgSave" class="form"><div class="form-grid c3">${field({label:"Адрес бота",id:"tg-url",hint:"адрес облачного бота (https://…workers.dev) или локальный http://127.0.0.1:8787"},`<input id="tg-url" name="url" value="${esc(s.url)}" class="input">`)}${field({label:"Ключ бота",id:"tg-key",hint:"для облачного бота; для локального не нужен"},`<input id="tg-key" name="key" value="${esc(s.key||"")}" class="input" type="password" autocomplete="off">`)}${field({label:"Счёт для записей",id:"tg-acc"},`<select id="tg-acc" name="accountId" class="select">${options(accounts.map(a=>({value:a.id,label:`${a.name} (${a.currency})`})),tgAccount()?.id||"")}</select>`)}<div class="field"><label>Автоматически</label><label class="row xs" style="gap:8px;height:40px"><input type="checkbox" name="auto" ${s.auto?"checked":""}>забирать при открытии приложения</label></div></div>${msg(st.ok,st.message)}<div class="actions"><button type="button" class="btn secondary" data-act="tgSync">Забрать из Telegram сейчас</button><button type="submit" class="btn primary">Сохранить</button></div></form>
   <details class="mt3"><summary>Как настроить бота (один раз)</summary><ol class="xs sec mt2" style="padding-left:18px;line-height:1.7"><li>В Telegram откройте <b>@BotFather</b> → <code>/newbot</code> → придумайте имя → скопируйте токен.</li><li>Запустите <code>C:\\Users\\Mira\\FinFlowBot\\start-bot.cmd</code>, вставьте токен (спросит один раз).</li><li>Напишите своему боту <code>/start</code> — вы станете владельцем. Второй человек пишет боту <code>/id</code>, а вы отправляете <code>/allow ЕГО_ID</code>.</li><li>Дальше просто пишите: <code>5000 кофе</code>, <code>12к такси</code>, <code>+250000 зарплата</code>, <code>вчера 3000 обед</code>.</li><li>Окно бота держите открытым (можно свернуть). Чтобы он стартовал сам: Win+R → <code>shell:startup</code> → положите туда ярлык на start-bot.cmd.</li></ol></details>`});
 }
-FORMS.tgSave=d=>{ const s=tgSettings(); s.url=(d.url||TG_DEFAULT_URL).trim()||TG_DEFAULT_URL; s.accountId=d.accountId||""; s.auto=d.auto==="on"; UI.tg_state={ok:true,message:"Сохранено"}; commit(); };
+FORMS.tgSave=d=>{ const s=tgSettings(); s.url=(d.url||TG_DEFAULT_URL).trim()||TG_DEFAULT_URL; s.key=(d.key||"").trim(); s.accountId=d.accountId||""; s.auto=d.auto==="on"; UI.tg_state={ok:true,message:"Сохранено"}; commit(); };
 ACTIONS.tgSync=async()=>{ UI.tg_state={ok:true,message:"Проверяю…"}; rerender(); const r=await tgSync(); UI.tg_state={ok:r.ok,message:r.message}; rerender(); };
 async function tgAutoSync(){ try{ if(!tgSettings().auto) return; const r=await tgSync({silent:true}); if(r.ok&&r.added){ UI.tgFlash=r.message; rerender(); setTimeout(()=>{ UI.tgFlash=null; rerender(); },6000); } }catch{} }
 
 /** Сводка план/факт по категориям для бота: он предупредит в чате о перерасходе и пришлёт итоги месяца. */
-async function tgPushBudget(s){ const snap=budgetSnapshotForBot(); if(!snap) return; await fetch(s.url.replace(/\/$/,"")+"/budget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(snap)}); }
+async function tgPushBudget(s){ const snap=budgetSnapshotForBot(); if(!snap) return; await fetch(s.url.replace(/\/$/,"")+"/budget",{method:"POST",headers:tgHeaders(s,true),body:JSON.stringify(snap)}); }
 function budgetSnapshotForBot(){ const {py,pm}=budgetPlanMonth({}); const rows=mpLimitRows(py,pm); if(!rows.length) return null; const range=periodRange("MONTHLY",new Date(Date.UTC(py,pm-1,1))); return {month:`${py}-${String(pm).padStart(2,"0")}`,monthLabel:`${MONTHS_RU[pm-1]} ${py}`,daysLeft:daysRemaining(range),rows:rows.map(r=>({name:r.name,plan:r.limit,fact:r.spent})),planTotal:rows.reduce((a,r)=>a+r.limit,0),factTotal:rows.reduce((a,r)=>a+r.spent,0)}; }
 
 // ===================== облако: общая база М и Л через приватный GitHub Gist =====================
