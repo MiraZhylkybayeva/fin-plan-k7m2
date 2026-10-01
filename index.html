@@ -1852,7 +1852,7 @@ async function tgSync({silent=false}={}){
       DB.transactions.push({id:uid(),type:"TRANSFER",date:e.date,amount:Number(e.amount)||0,currency:fromA.currency,accountId:fromA.id,toAccountId:toA.id,toAmount:fromA.currency===toA.currency?null:Number(e.amount)||0,categoryId:null,merchant:(e.note||"").replace(/^→ к [МЛ] · /,"")||null,note:`Telegram · ${e.user||""}`.trim(),owner,dedupeHash:hash,tgRev:Number(e.rev)||0,importBatchId:null,createdAt:Date.now()}); ids.push(e.id); added++; continue; }
     const acc=findAcc(e.account,owner)||ownerDefault(owner); const categoryId=e.type==="EXPENSE"?categorize({merchant:e.note,description:e.note},DB.rules):tgIncomeCategory(e.note);
     DB.transactions.push({id:uid(),type:e.type==="INCOME"?"INCOME":"EXPENSE",date:e.date,amount:Number(e.amount)||0,currency:acc.currency,accountId:acc.id,toAccountId:null,toAmount:null,categoryId,merchant:e.note||null,note:e.user?`Telegram · ${e.user}`:"Telegram",owner,dedupeHash:hash,tgRev:Number(e.rev)||0,importBatchId:null,createdAt:Date.now()}); ids.push(e.id); added++; }
-  if(ids.length){ try{ await fetch(s.url.replace(/\/$/,"")+"/ack",{method:"POST",headers:tgHeaders(s,true),body:JSON.stringify({ids})}); }catch{} }
+  if(ids.length){ try{ await fetch(s.url.replace(/\/$/,"")+"/ack",{method:"POST",headers:tgHeaders(s,true),body:JSON.stringify({ids,revs:Object.fromEntries(data.entries.filter(e=>ids.includes(e.id)&&Number(e.rev)>0).map(e=>[e.id,Number(e.rev)]))})}); }catch{} }
   if(added) saveDb();
   const skipMsg=skipped.length?` Не определён счёт для: ${skipped.join("; ")} — назовите счета в Telegram так же, как в «Капитал → Остатки» (или уточните «с каспи на наличные»).`:"";
   tgPushBudget(s).catch(()=>{});
