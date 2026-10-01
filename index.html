@@ -400,6 +400,8 @@ select.mp-in option,select.select option,select.input option{color:#0b0b0b;backg
 .nav-edit{display:block;width:100%;margin-top:10px;padding:6px 12px;text-align:left;font:inherit;font-size:11px;color:var(--text-muted);background:none;border:1px dashed var(--border);border-radius:8px;cursor:pointer}.nav-edit:hover{color:var(--text-primary);border-color:var(--text-muted)}
 .nav-editrow{cursor:pointer}.nav-editrow input{width:16px;height:16px}.nav-hint{font-size:11px;color:var(--text-muted);padding:6px 12px 0}
 
+.ln-paid{padding:14px 18px}.ln-paid .bar{margin-top:10px;height:10px}.ln-paid-pct{font-size:30px;font-weight:700;line-height:1.1;letter-spacing:-.01em}
+
 </style>
 </head>
 <body>
@@ -1634,10 +1636,10 @@ ROUTES["/loans"]=function(params){
   const ownerSeg=`<div class="row" style="gap:6px"><span class="xs muted">Чей:</span><div class="seg" style="grid-template-columns:repeat(3,auto)">${[["","Все"],["М","М"],["Л","Л"]].map(([v,l])=>`<button type="button" class="${owner===v?"active":""}" data-act="loanOwner" data-v="${v}" style="min-width:2.6rem">${l}</button>`).join("")}</div></div>`; if(params.id&&debts.some(d=>d.id===params.id)){ UI.loanId=params.id; UI.loanBank=loanBankName(debts.find(d=>d.id===params.id)); }
   if(params.bank!==undefined){ UI.loanBank=params.bank; }
   const selIds=new Set((params.ids||"").split(",").filter(Boolean)); const base=settings.baseCurrency; const loans=[...debts];
-  const income=cashFlow(transactions,current).income; const summary=debtSummary(debts,income,base);
+  const planForIncome=latestMonthPlan(); const income=(planForIncome?mpTotals(planForIncome).income:0)||cashFlow(transactions,current).income; const summary=debtSummary(debts,income,base);
   const view=params.view==="payoff"?"payoff":(params.view==="analysis"||params.view==="calendar")?"calendar":"list"; UI.loanView=view;
   const tabs=`<nav class="seg" style="grid-template-columns:1fr 1fr 1fr" aria-label="Разделы кредитов"><a class="${view==="list"?"active":""}" href="#/loans?view=list" style="text-align:center">Список</a><a class="${view==="calendar"?"active":""}" href="#/loans?view=calendar" style="text-align:center">Календарь</a><a class="${view==="payoff"?"active":""}" href="#/loans?view=payoff" style="text-align:center">Досрочное погашение</a></nav>`;
-  const header=pageHeader("Кредиты",(view==="list"?"Список кредитов по банкам — заполняйте строки и сохраняйте":view==="calendar"?"Календарь платежей и остатки по месяцам":"Советник по досрочному погашению: что, когда и на какую сумму закрывать")+(owner?` · показаны кредиты ${owner}`:""),`<div class="row" style="gap:12px;flex-wrap:wrap">${ownerSeg}${tabs}</div>`);
+  const header=pageHeader("Кредиты",(view==="list"?"Список кредитов по банкам — заполняйте строки и сохраняйте":view==="calendar"?"Календарь платежей и остатки по месяцам":"Советник по досрочному погашению: что, когда и на какую сумму закрывать")+(owner?` · показаны кредиты ${owner}`:""),`<div class="row" style="gap:12px;flex-wrap:wrap">${ownerSeg}${tabs}</div>`)+loanPaidCard(loans,base,owner);
   // ---- 1. редактируемый список
   const st=UI.loan_state||{};
   let rowNo=0;
@@ -1869,6 +1871,14 @@ function loanTipsCard({loans,summary,income,base,transactions}){
   tips.push(`Отмечайте платежи в «Плане на месяц» галочками — остатки здесь обновляются сами, и советы всегда считаются от актуальных цифр.`);
   return card({title:"Подсказки финансиста",subtitle:"Правила, по которым считаются рекомендации выше",body:`<ul class="ln-tips">${tips.map(t=>`<li>${t}</li>`).join("")}</ul>`});
 }
+
+/** Сколько уже погашено от суммы по договорам: общий %, по М и Л, сколько кредитов закрыто, сколько погашено в этом месяце. */
+function loanPaidStats(loans){ let contract=0, paid=0, closed=0; for(const l of loans){ const c=Math.max(l.principal||0,l.balance||0); contract+=c; paid+=Math.max(0,c-(l.balance||0)); if((l.balance||0)<=0&&c>0) closed++; } return {contract,paid,left:contract-paid,closed,count:loans.length,percent:contract>0?paid/contract*100:0}; }
+function loanPaidCard(loans,base,owner){ if(!loans.length) return ""; const st=loanPaidStats(loans); if(st.contract<=0) return ""; const pct=v=>v.toFixed(v>=10||v===0?0:1).replace(".",",")+"%";
+  const ownerOf=l=>(l.name||"").trim().charAt(0).toUpperCase(); const part=o=>{ const ls=loans.filter(l=>ownerOf(l)===o); if(!ls.length) return ""; const x=loanPaidStats(ls); return `<span class="row" style="gap:6px"><b>${o}</b><span class="tabular">${pct(x.percent)}</span><span class="muted">(${esc(fmt(x.paid,base))} из ${esc(fmt(x.contract,base))})</span></span>`; };
+  const t=todayUtc(); const ids=new Set(loans.map(l=>l.id)); const monthPaid=(Array.isArray(DB.loanPayments)?DB.loanPayments:[]).filter(p=>ids.has(p.debtId)&&p.year===t.getUTCFullYear()&&p.month===t.getUTCMonth()+1).reduce((a,p)=>a+p.amount,0);
+  const color=st.percent>=66?"var(--status-good)":st.percent>=33?"var(--status-warning)":"var(--series-1)";
+  return `<div class="card ln-paid mb3"><div class="between" style="align-items:flex-end;flex-wrap:wrap;gap:8px 16px"><div><p class="xs muted">Погашено${owner?` · ${owner}`:""} от суммы по договорам</p><p class="ln-paid-pct tabular" style="color:${color}">${pct(st.percent)}</p></div><div class="xs sec" style="text-align:right"><p><span class="tabular ink semi">${esc(fmt(st.paid,base))}</span> из <span class="tabular">${esc(fmt(st.contract,base))}</span></p><p class="muted">осталось ${esc(fmt(st.left,base))} · закрыто кредитов: ${st.closed} из ${st.count}${monthPaid?` · в этом месяце погашено ${esc(fmt(monthPaid,base))}`:""}</p></div></div>${bar(st.percent,color,`Погашено ${st.percent.toFixed(0)} процентов`)}${owner?"":`<div class="row xs mt2" style="gap:6px 20px;flex-wrap:wrap">${part("М")}${part("Л")}</div>`}</div>`; }
 
 // ===================== Telegram: забираем расходы из локального бота =====================
 const TG_DEFAULT_URL="http://127.0.0.1:8787";
